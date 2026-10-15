@@ -2,89 +2,101 @@
 #include "../include/HashChain.h"
 #include "../include/Token.h"
 
-#include <stdint.h>
+#include <cstdint>
 
-static uint32_t hashThreeBytes(
-    const char* input,
-    int position
-)
+namespace
 {
-    uint32_t a =
-        (uint32_t)(unsigned char)input[position];
+    // Hash three consecutive bytes to find possible matches.
+    std::uint32_t hashThreeBytes(
+        const std::uint8_t* input,
+        int position
+    )
+    {
+        std::uint32_t a = input[position];
+        std::uint32_t b = input[position + 1];
+        std::uint32_t c = input[position + 2];
 
-    uint32_t b =
-        (uint32_t)(unsigned char)input[position + 1];
+        std::uint32_t hash =
+            a * 257u +
+            b * 263u +
+            c * 269u;
 
-    uint32_t c =
-        (uint32_t)(unsigned char)input[position + 2];
+        return hash & (LZ77_HASH_SIZE - 1);
+    }
 
-    uint32_t hash =
-        a * 257u +
-        b * 263u +
-        c * 269u;
 
-    return hash & (LZ77_HASH_SIZE - 1);
+    // Insert a valid position into the hash chain.
+    void insertPosition(
+        HashChain* chain,
+        const std::uint8_t* input,
+        int position,
+        int inputSize
+    )
+    {
+        if (position + 2 >= inputSize)
+        {
+            return;
+        }
+
+        std::uint32_t hash =
+            hashThreeBytes(input, position);
+
+        insertHashPosition(
+            chain,
+            static_cast<int>(hash),
+            position
+        );
+    }
+
+
+    int smaller(int a, int b)
+    {
+        return (a < b) ? a : b;
+    }
 }
 
-static void insertPosition(
-    HashChain* chain,
-    const char* input,
-    int position,
-    int inputSize
+
+namespace cmp
+{
+
+bool compressLZ77(
+    TokenBlock& block,
+    const std::uint8_t* src,
+    std::uint32_t srcLen
 )
 {
-    if (position + 2 >= inputSize)
+    if (srcLen > 0 && src == nullptr)
     {
-        return;
+        return false;
     }
 
-    uint32_t hash =
-        hashThreeBytes(input, position);
-
-    insertHashPosition(
-        chain,
-        (int)hash,
-        position
-    );
-}
-
-static int smaller(
-    int a,
-    int b
-)
-{
-    if (a < b)
+    // Initialize the shared block.
+    if (!initTokenBlock(block, src, srcLen))
     {
-        return a;
+        return false;
     }
 
-    return b;
-}
-
-int compressLZ77(
-    const char* input,
-    int inputSize,
-    TokenArray* output
-)
-{
-    if (input == 0 || output == 0)
+    if (srcLen == 0)
     {
-        return 0;
+        return finishTokenBlock(block);
     }
 
-    if (inputSize <= 0)
+    // The current hash-chain API uses int positions.
+    if (srcLen > static_cast<std::uint32_t>(INT32_MAX))
     {
-        return 1;
+        return false;
     }
 
-    HashChain chain;
+    const int inputSize = static_cast<int>(srcLen);
+
+    HashChain chain{};
 
     if (!initHashChain(
             &chain,
             inputSize,
             LZ77_HASH_SIZE))
     {
-        return 0;
+        return false;
     }
 
     int current = 0;
@@ -94,23 +106,14 @@ int compressLZ77(
         int bestLength = 0;
         int bestPosition = -1;
 
-        /*
-         * We need at least 3 bytes to create
-         * a hash-chain entry.
-         */
+        // A three-byte hash requires at least three input bytes.
         if (current + 2 < inputSize)
         {
-            uint32_t hash =
-                hashThreeBytes(
-                    input,
-                    current
-                );
+            std::uint32_t hash =
+                hashThreeBytes(src, current);
 
             int candidate =
-                getHashHead(
-                    &chain,
-                    (int)hash
-                );
+                getHashHead(&chain, static_cast<int>(hash));
 
             int windowStart =
                 current - LZ77_WINDOW_SIZE;
@@ -122,49 +125,33 @@ int compressLZ77(
 
             int depth = 0;
 
-            /*
-             * Search through previous positions
-             * having the same 3-byte hash.
-             */
+            // Search previous positions with the same hash.
             while (
                 candidate >= windowStart &&
                 candidate >= 0 &&
                 depth < LZ77_MAX_HASH_DEPTH
             )
             {
-                int remaining =
-                    inputSize - current;
+                int remaining = inputSize - current;
 
-                /*
-                 * Leave one character for nextChar.
-                 * This means we never need a special
-                 * EOF character inside Token.
-                 */
-                int maximumLength =
-                    remaining - 1;
+                // Preserve one byte for nextChar.
+                int maximumLength = remaining - 1;
 
-                maximumLength =
-                    smaller(
-                        maximumLength,
-                        LZ77_LOOKAHEAD_SIZE
-                    );
+                maximumLength = smaller(
+                    maximumLength,
+                    LZ77_LOOKAHEAD_SIZE
+                );
 
                 int length = 0;
 
-                /*
-                 * Compare the candidate sequence
-                 * with the current sequence.
-                 *
-                 * candidate < current, so overlapping
-                 * LZ77 matches are naturally supported.
-                 */
+                // Compare the candidate with the current sequence.
                 while (
                     length < maximumLength &&
-                    input[candidate + length]
-                        == input[current + length]
+                    src[candidate + length] ==
+                        src[current + length]
                 )
                 {
-                    length++;
+                    ++length;
                 }
 
                 if (length > bestLength)
@@ -179,60 +166,46 @@ int compressLZ77(
                 }
 
                 candidate =
-                    getPreviousPosition(
-                        &chain,
-                        candidate
-                    );
+                    getPreviousPosition(&chain, candidate);
 
-                depth++;
+                ++depth;
             }
         }
 
-        /*
-         * CASE 1:
-         * A match was found.
-         */
-        if (bestLength > 0)
+        if (bestLength >= static_cast<int>(kMinMatch))
         {
-            int nextIndex =
-                current + bestLength;
+            // Emit a match followed by its next literal.
+            Token token{};
 
-            Token token;
+            token.offset = static_cast<std::uint32_t>(
+                current - bestPosition
+            );
 
-            token.offset =
-                (uint32_t)(
-                    current - bestPosition
-                );
+            token.length = static_cast<std::uint32_t>(
+                bestLength
+            );
 
-            token.length =
-                (uint32_t)bestLength;
+            token.nextChar = src[current + bestLength];
 
-            token.nextChar =
-                input[nextIndex];
-
-            if (!pushToken(output, token))
+            if (!emitToken(block, token))
             {
                 freeHashChain(&chain);
-                return 0;
+                return false;
             }
 
-            /*
-             * Every consumed position is inserted
-             * into the hash chain.
-             */
-            int advance =
-                bestLength + 1;
+            // Insert the consumed positions into the hash chain.
+            int advance = bestLength + 1;
 
             for (
                 int position = current;
                 position < current + advance &&
-                position < inputSize;
-                position++
+                    position < inputSize;
+                ++position
             )
             {
                 insertPosition(
                     &chain,
-                    input,
+                    src,
                     position,
                     inputSize
                 );
@@ -240,41 +213,35 @@ int compressLZ77(
 
             current += advance;
         }
-
-        /*
-         * CASE 2:
-         * No match was found.
-         *
-         * Emit:
-         *
-         * (0, 0, literal)
-         */
         else
         {
-            Token token;
+            // No match: emit a literal token.
+            Token token{};
 
             token.offset = 0;
             token.length = 0;
-            token.nextChar = input[current];
+            token.nextChar = src[current];
 
-            if (!pushToken(output, token))
+            if (!emitToken(block, token))
             {
                 freeHashChain(&chain);
-                return 0;
+                return false;
             }
 
             insertPosition(
                 &chain,
-                input,
+                src,
                 current,
                 inputSize
             );
 
-            current++;
+            ++current;
         }
     }
 
     freeHashChain(&chain);
 
-    return 1;
+    return finishTokenBlock(block);
 }
+
+} // namespace cmp

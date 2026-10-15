@@ -1,19 +1,26 @@
 #ifndef LZ77_H
 #define LZ77_H
 
-#include <stdint.h>
-#include "Token.h"
+#include <cstdint>
+#include "symbols.hpp"
+#include "HashChain.h"
 
-#define LZ77_WINDOW_SIZE 32768 // 32KB
-#define LZ77_LOOKAHEAD_SIZE 258 // 258 bytes
+// LZ77 configuration
+constexpr int LZ77_HASH_SIZE = 32768;
+constexpr int LZ77_WINDOW_SIZE = 32768;
+constexpr int LZ77_MAX_HASH_DEPTH = 256;
+constexpr int LZ77_LOOKAHEAD_SIZE = 258;
 
-#define LZ77_HASH_SIZE 65536 //this needs to be figured out
-#define LZ77_MAX_HASH_DEPTH 64 
+namespace cmp {
 
-int compressLZ77( // is this related to container??
-    const char* input, 
-    int inputSize,
-    TokenArray* output
+// Compress the source data using LZ77.
+// Store generated tokens and symbol frequencies in TokenBlock.
+bool compressLZ77(
+    TokenBlock& block,
+    const std::uint8_t* src,
+    std::uint32_t srcLen
 );
+
+} // namespace cmp
 
 #endif

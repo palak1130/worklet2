@@ -1,183 +1,229 @@
-#include <stdio.h>
-#include <stdlib.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cstdint>
+#include <climits>
 
 #include "include/LZ77.h"
 #include "include/Token.h"
 
-static char* readFile(
+static std::uint8_t* readFile(
     const char* filename,
-    int* fileSize
+    std::uint32_t* fileSize
 )
 {
-    FILE* file =
-        fopen(filename, "rb");
+    FILE* file = fopen(filename, "rb");
 
-    if (file == 0)
+    if (file == nullptr)
     {
-        return 0;
+        return nullptr;
     }
 
-    fseek(file, 0, SEEK_END);
-
-    long size =
-        ftell(file);
-
-    fseek(file, 0, SEEK_SET);
-
-    if (size < 0)
+    if (fseek(file, 0, SEEK_END) != 0)
     {
         fclose(file);
-        return 0;
+        return nullptr;
     }
 
-    char* buffer =
-        (char*)malloc(
-            (size_t)size
-        );
+    long size = ftell(file);
 
-    if (buffer == 0)
+    if (size < 0 ||
+        static_cast<unsigned long>(size) > INT32_MAX)
     {
         fclose(file);
-        return 0;
+        return nullptr;
     }
 
-    size_t bytesRead =
-        fread(
-            buffer,
-            1,
-            (size_t)size,
-            file
-        );
+    if (fseek(file, 0, SEEK_SET) != 0)
+    {
+        fclose(file);
+        return nullptr;
+    }
+
+    std::size_t allocationSize =
+        size == 0 ? 1 : static_cast<std::size_t>(size);
+
+    auto* buffer = static_cast<std::uint8_t*>(
+        malloc(allocationSize)
+    );
+
+    if (buffer == nullptr)
+    {
+        fclose(file);
+        return nullptr;
+    }
+
+    std::size_t bytesRead = fread(
+        buffer,
+        1,
+        static_cast<std::size_t>(size),
+        file
+    );
 
     fclose(file);
 
-    if (bytesRead != (size_t)size)
+    if (bytesRead != static_cast<std::size_t>(size))
     {
         free(buffer);
-        return 0;
+        return nullptr;
     }
 
-    *fileSize = (int)size;
+    *fileSize = static_cast<std::uint32_t>(size);
 
     return buffer;
 }
 
-static void printToken(
-    Token token,
-    int index
-)
+
+static void printByte(std::uint8_t byte)
 {
-    printf(
-        "Token %d : (%u, %u, '%c')\n",
-        index,
-        token.offset,
-        token.length,
-        token.nextChar
-    );
+    if (byte >= 32 && byte <= 126 &&
+        byte != '\'' && byte != '\\')
+    {
+        printf("'%c'", static_cast<int>(byte));
+    }
+    else
+    {
+        printf("0x%02X", static_cast<unsigned>(byte));
+    }
 }
+
+
+static void printTokens(const cmp::TokenBlock& block)
+{
+    std::uint32_t index = 0;
+    int tokenNumber = 0;
+
+    while (index < block.n)
+    {
+        cmp::Tok word = block.tok[index];
+
+        if (cmp::isMatch(word))
+        {
+            // A match is followed by its next literal word.
+            if (index + 1 >= block.n ||
+                cmp::isMatch(block.tok[index + 1]))
+            {
+                printf("Error: Invalid compact token sequence.\n");
+                return;
+            }
+
+            std::uint32_t distance = cmp::distOf(word);
+            std::uint32_t length = cmp::lenOf(word);
+            std::uint8_t nextChar =
+                cmp::litOf(block.tok[index + 1]);
+
+            printf(
+                "Token %d : (%u, %u, ",
+                tokenNumber,
+                distance,
+                length
+            );
+
+            printByte(nextChar);
+            printf(")\n");
+
+            index += 2;
+        }
+        else
+        {
+            // A literal is represented by one compact word.
+            std::uint8_t literal = cmp::litOf(word);
+
+            printf("Token %d : (0, 0, ", tokenNumber);
+
+            printByte(literal);
+            printf(")\n");
+
+            index++;
+        }
+
+        tokenNumber++;
+    }
+}
+
 
 int main(int argc, char* argv[])
 {
-    char* input = 0;
-    int inputSize = 0;
+    std::uint8_t* input = nullptr;
+    std::uint32_t inputSize = 0;
 
-    /*
-     * If a filename is provided,
-     * read the file.
-     */
     if (argc >= 2)
     {
-        input =
-            readFile(
-                argv[1],
-                &inputSize
-            );
+        input = readFile(argv[1], &inputSize);
 
-        if (input == 0)
+        if (input == nullptr)
         {
-            printf(
-                "Error: Could not read input file.\n"
-            );
-
+            printf("Error: Could not read input file.\n");
             return 1;
         }
     }
-
-    /*
-     * Otherwise use a small test string.
-     */
     else
     {
-        const char* test =
-            "ABABABABABABABCD";
+        const char* test = "ABABABABABABABCD";
 
         inputSize = 16;
 
-        input =
-            (char*)malloc(
-                inputSize
-            );
+        input = static_cast<std::uint8_t*>(
+            malloc(inputSize)
+        );
 
-        if (input == 0)
+        if (input == nullptr)
         {
             return 1;
         }
 
-        for (int i = 0; i < inputSize; i++)
+        for (std::uint32_t i = 0; i < inputSize; i++)
         {
-            input[i] = test[i];
+            input[i] = static_cast<std::uint8_t>(test[i]);
         }
     }
 
-    TokenArray tokens;
+    cmp::TokenBlock block{};
 
-    initTokenArray(&tokens);
-
-    if (!compressLZ77(
-            input,
-            inputSize,
-            &tokens))
+    if (!cmp::compressLZ77(block, input, inputSize))
     {
-        printf(
-            "Error: LZ77 compression failed.\n"
-        );
+        printf("Error: LZ77 compression failed.\n");
 
         free(input);
-
         return 1;
     }
 
-    printf(
-        "\n========== LZ77 OUTPUT ==========\n\n"
-    );
+    printf("\n========== LZ77 OUTPUT ==========\n\n");
+    printf("Input size          : %u bytes\n", inputSize);
+    printf("Compact word count  : %u\n", block.n);
+    printf("LZ77 token sequence :\n\n");
 
-    printf(
-        "Input size  : %d bytes\n",
-        inputSize
-    );
+    printTokens(block);
 
-    printf(
-        "Token count : %u\n\n",
-        tokens.size
-    );
+    printf("\n========== SYMBOL FREQUENCIES ==========\n\n");
 
-    for (
-        uint32_t i = 0;
-        i < tokens.size;
-        i++
-    )
+    printf("End-of-block frequency: %u\n",
+           block.litlenFreq[cmp::kEob]);
+
+    printf("Literal/length frequencies:\n");
+
+    for (unsigned i = 0; i < cmp::kNumLitLen; i++)
     {
-        printToken(
-            tokens.data[i],
-            (int)i
-        );
+        if (block.litlenFreq[i] != 0)
+        {
+            printf("Symbol %u : %u\n",
+                   i,
+                   block.litlenFreq[i]);
+        }
     }
 
-    printf(
-        "\n=================================\n"
-    );
+    printf("\nDistance frequencies:\n");
 
-    freeTokenArray(&tokens);
+    for (unsigned i = 0; i < cmp::kNumDist; i++)
+    {
+        if (block.distFreq[i] != 0)
+        {
+            printf("Symbol %u : %u\n",
+                   i,
+                   block.distFreq[i]);
+        }
+    }
+
+    printf("\n========================================\n");
 
     free(input);
 

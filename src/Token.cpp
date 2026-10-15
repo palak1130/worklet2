@@ -1,59 +1,119 @@
 #include "../include/Token.h"
-#include <stdlib.h>
 
-void initTokenArray(TokenArray* array)
-{
-    array->data = 0;
-    array->size = 0;
-    array->capacity = 0;
-}
+namespace cmp {
 
-int pushToken(TokenArray* array, Token token)
+// Initialize the shared token block.
+bool initTokenBlock(
+    TokenBlock& block,
+    const std::uint8_t* src,
+    std::uint32_t srcLen
+)
 {
-    if (array->size >= array->capacity)
+    if (srcLen > 0 && src == nullptr)
     {
-        uint32_t newCapacity;
-
-        if (array->capacity == 0)
-        {
-            newCapacity = 64;
-        }
-        else
-        {
-            newCapacity = array->capacity * 2;
-        }
-
-        Token* newData =
-            (Token*)malloc(newCapacity * sizeof(Token));
-
-        if (newData == 0)
-        {
-            return 0;
-        }
-
-        for (uint32_t i = 0; i < array->size; i++)
-        {
-            newData[i] = array->data[i];
-        }
-
-        free(array->data);
-
-        array->data = newData;
-        array->capacity = newCapacity;
+        return false;
     }
 
-    array->data[array->size] = token;
-    array->size++;
+    block.reset();
 
-    return 1;
+    block.src = src;
+    block.srcLen = srcLen;
+
+    return true;
 }
 
-void freeTokenArray(TokenArray* array)
+
+// Emit one literal byte and update its frequency.
+bool emitLiteral(
+    TokenBlock& block,
+    std::uint8_t byte
+)
 {
-    free(array->data);
+    if (block.full())
+    {
+        return false;
+    }
 
-    array->data = 0;
-    array->size = 0;
-    array->capacity = 0;
+    block.addLiteral(byte);
+
+    return true;
 }
-// can we make symbols in this tokens loop 
+
+
+// Emit one LZ77 match and update its frequencies.
+bool emitMatch(
+    TokenBlock& block,
+    std::uint32_t length,
+    std::uint32_t distance
+)
+{
+    if (block.full())
+    {
+        return false;
+    }
+
+    if (length < kMinMatch || length > kMaxMatch)
+    {
+        return false;
+    }
+
+    if (distance == 0 || distance > kMaxDistance)
+    {
+        return false;
+    }
+
+    block.addMatch(length, distance);
+
+    return true;
+}
+
+
+// Emit one project token: (offset, length, nextChar).
+bool emitToken(
+    TokenBlock& block,
+    const Token& token
+)
+{
+    // A match token requires a match word and a literal word.
+    if (token.length != 0)
+    {
+        if (!block.hasRoomForToken())
+        {
+            return false;
+        }
+
+        if (token.length < kMinMatch ||
+            token.length > kMaxMatch)
+        {
+            return false;
+        }
+
+        if (token.offset == 0 ||
+            token.offset > kMaxDistance)
+        {
+            return false;
+        }
+    }
+    else
+    {
+        // A literal token requires one compact word.
+        if (block.full())
+        {
+            return false;
+        }
+    }
+
+    block.addToken(token);
+
+    return true;
+}
+
+
+// Finish the block.
+// reset() already initializes the EOB frequency to 1.
+bool finishTokenBlock(TokenBlock& block)
+{
+    return block.litlenFreq[kEob] == 1;
+}
+
+} // namespace cmp

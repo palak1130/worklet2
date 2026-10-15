@@ -1,24 +1,40 @@
 #ifndef TOKEN_H
 #define TOKEN_H
 
-#include <stdint.h>
+#include <cstdint>
+#include "symbols.hpp"
 
-struct Token {
-    uint32_t offset;
-    uint32_t length;
-    char nextChar;
-}; // struct oken to be replaced by uint32
+namespace cmp {
 
-struct TokenArray {
-    Token* data;
-    uint32_t size;
-    uint32_t capacity;
-}; // replace by vector token 
+// Initialize a token block for the given source data.
+bool initTokenBlock(
+    TokenBlock& block,
+    const std::uint8_t* src,
+    std::uint32_t srcLen
+);
 
-void initTokenArray(TokenArray* array);
+// Emit one literal byte.
+bool emitLiteral(
+    TokenBlock& block,
+    std::uint8_t byte
+);
 
-int pushToken(TokenArray* array, Token token);
+// Emit one LZ77 match.
+bool emitMatch(
+    TokenBlock& block,
+    std::uint32_t length,
+    std::uint32_t distance
+);
 
-void freeTokenArray(TokenArray* array);
+// Emit one project token: (offset, length, nextChar).
+bool emitToken(
+    TokenBlock& block,
+    const Token& token
+);
+
+// Finish the block.
+bool finishTokenBlock(TokenBlock& block);
+
+} // namespace cmp
 
 #endif

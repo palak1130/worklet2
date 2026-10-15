@@ -1,6 +1,6 @@
 CXX = g++
 
-CXXFLAGS = -std=c++17 -Wall -Wextra -pedantic -Iinclude
+CXXFLAGS = -std=c++17 -Wall -Wextra -pedantic -Iinclude -Ishared/include
 
 TARGET = lz77
 
@@ -48,6 +48,7 @@ src/LZ77.o: src/LZ77.cpp include/LZ77.h include/Token.h include/HashChain.h
 	$(CXX) $(CXXFLAGS) -c src/LZ77.cpp -o src/LZ77.o
 
 test: $(TEST_TARGET)
+		./$(TEST_TARGET)
 
 $(TEST_TARGET): $(TEST_OBJECTS)
 	$(CXX) $(CXXFLAGS) $(TEST_OBJECTS) -o $(TEST_TARGET)
